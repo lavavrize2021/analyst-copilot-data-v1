@@ -4,7 +4,8 @@ ABSTAIN="Not found in this filing."
 def _snippet(text,terms,limit=1000):
  low=text.lower(); pos=[low.find(t) for t in terms if len(t)>3 and low.find(t)>=0]; at=min(pos) if pos else 0; start=max(0,at-220); return text[start:start+limit].strip()
 def _ollama(question,hits):
- evidence="\n\n".join(f"[PAGE {p['page']}] {p['text'][:2000]}" for _,p in hits[:3])
+ terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
+ evidence="\n\n".join(f"[PAGE {p['page']}] {_snippet(p['text'],terms,600)}" for _,p in hits[:3])
  prompt=f'''You are a conservative financial filing analyst. Answer ONLY from the filing evidence below.
 Return one JSON object with exactly these keys:
 {{"answer":"short precise answer in natural language with units (e.g. $500,343 million) or Not found in this filing.","page":integer_or_null,"quote":"very short quote of 4-6 words from the page that contains the key number","confidence":number_0_to_1}}
