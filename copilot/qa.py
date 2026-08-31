@@ -1,7 +1,7 @@
 import json,os,re
 from urllib.request import Request,urlopen
 ABSTAIN="Not found in this filing."
-CALC_RE=re.compile(r'\b(calculat|divid|ratio|percent|turnover|margin|growth|averag|multiply|subtract)\b',re.I)
+CALC_RE=re.compile(r'\b(calculat|divid|ratio|percent|turnover|margin|growth|averag|multiply|subtract|change|compar|difference|increase|decrease|between)\b',re.I)
 
 def _snippet(text,terms,limit=600):
  low=text.lower(); pos=[low.find(t) for t in terms if len(t)>3 and low.find(t)>=0]; at=min(pos) if pos else 0; start=max(0,at-200); return text[start:start+limit].strip()
@@ -66,7 +66,7 @@ def answer_question(store,filing_id,question):
    recomputed=_recompute(answer)
    if recomputed:answer=f"{recomputed} (verified)"
   print(f"[DEBUG] answer={answer!r} confidence={result.get('confidence')} page={result.get('page')} valid={valid}")
-  if answer==ABSTAIN or result.get("confidence",0)<.72 or not valid:
+  if answer==ABSTAIN or (result.get("confidence") or 0)<.72 or not valid:
    return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
   clean_quote=" ".join(re.sub(r"\s*\|\s*"," ",quote).split())
   return {"answer":answer,"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":clean_quote}]}
