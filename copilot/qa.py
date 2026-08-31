@@ -7,8 +7,8 @@ def _ollama(question,hits):
  evidence="\n\n".join(f"[PAGE {p['page']}] {p['text'][:2000]}" for _,p in hits[:3])
  prompt=f'''You are a conservative financial filing analyst. Answer ONLY from the filing evidence below.
 Return one JSON object with exactly these keys:
-{{"answer":"short precise answer or Not found in this filing.","page":integer_or_null,"quote":"short verbatim proving quote","confidence":number_0_to_1}}
-Resolve the requested year, table column, sign, and units carefully. For a calculation, include inputs and arithmetic in answer. The quote must be copied verbatim from one cited page. If evidence is insufficient or ambiguous, abstain. Do not add markdown.
+{{"answer":"short precise answer in natural language with units (e.g. $500,343 million) or Not found in this filing.","page":integer_or_null,"quote":"short verbatim proving quote","confidence":number_0_to_1}}
+Resolve the requested year, table column, sign, and units carefully. Express the answer in natural language with proper units and formatting (e.g. "$500,343 million" not "500343"). For a calculation, include inputs and arithmetic. The quote must be copied verbatim from one cited page. If evidence is insufficient or ambiguous, abstain. Do not add markdown.
 
 QUESTION: {question}
 
@@ -31,6 +31,7 @@ def answer_question(store,filing_id,question):
   page=next((p for _,p in hits if p["page"]==result.get("page")),None); quote=result.get("quote","").strip(); normalized=lambda s:" ".join(re.sub(r"[|$,]"," ",s).lower().split()); valid=page and quote and normalized(quote) in normalized(page["text"])
   print(f"[DEBUG] answer={result.get('answer')!r} confidence={result.get('confidence')} page={result.get('page')} quote={quote!r} valid={valid}")
   if result.get("answer")==ABSTAIN or result.get("confidence",0)<.72 or not valid:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
-  return {"answer":result["answer"],"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":quote}]}
+  clean_quote=" ".join(re.sub(r"\s*\|\s*"," ",quote).split())
+  return {"answer":result["answer"],"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":clean_quote}]}
  terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
  return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[{"page":p["page"],"quote":_snippet(p["text"],terms)} for _,p in hits[:3]],"note":"Local answer model unavailable; start Ollama and ensure the configured model is installed."}
