@@ -53,6 +53,16 @@ class FilingStore:
    "free cash flow":"operating activities capital expenditures",
    "debt":"borrowings notes payable long-term debt",
    "inventory":"inventories",
+   "asset turnover":"average total assets revenues turnover",
+   "turnover":"average total assets revenues",
+   "return on assets":"average total assets net income roa",
+   "return on equity":"net income equity roe shareholders",
+   "operating income":"operating selling general administrative expenses",
+   "net income":"consolidated net income earnings attributable walmart",
+   "operating income":"income operating selling general administrative expenses revenues costs",
+   "gross margin":"net sales cost gross profit",
+   "net sales":"revenues net sales membership income",
+   "average total assets":"total assets average beginning ending",
   }
   for phrase,extra in expansions.items():
    if phrase in low:q.extend(tokens(extra))

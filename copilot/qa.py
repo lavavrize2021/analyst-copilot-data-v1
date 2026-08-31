@@ -1,14 +1,39 @@
 import json,os,re
 from urllib.request import Request,urlopen
 ABSTAIN="Not found in this filing."
-def _snippet(text,terms,limit=1000):
- low=text.lower(); pos=[low.find(t) for t in terms if len(t)>3 and low.find(t)>=0]; at=min(pos) if pos else 0; start=max(0,at-220); return text[start:start+limit].strip()
-def _ollama(question,hits):
- evidence="\n\n".join(f"[PAGE {p['page']}] {p['text'][:4500]}" for _,p in hits[:5])
+CALC_RE=re.compile(r'\b(calculat|divid|ratio|percent|turnover|margin|growth|averag|multiply|subtract)\b',re.I)
+
+def _snippet(text,terms,limit=600):
+ low=text.lower(); pos=[low.find(t) for t in terms if len(t)>3 and low.find(t)>=0]; at=min(pos) if pos else 0; start=max(0,at-200); return text[start:start+limit].strip()
+
+def _clean(text):
+ # Convert pipe-separated HTML table cells to readable prose
+ parts=[p.strip() for p in text.split('|') if p.strip()]
+ return ' '.join(parts)
+
+def _norm(s):
+ return ' '.join(re.sub(r'[$,]','',s).lower().split())
+
+def _recompute(answer_text):
+ # Parse explicit division from model answer: "X / Y" → recompute in Python
+ m=re.search(r'([\d,]+(?:\.\d+)?)\s*[/÷]\s*([\d,]+(?:\.\d+)?)',answer_text)
+ if m:
+  num=float(m.group(1).replace(',',''));den=float(m.group(2).replace(',',''))
+  if den:return round(num/den,2)
+ return None
+
+def _ollama(question,hits,terms,calc_mode):
+ snippets=[_clean(_snippet(p['text'],terms,600)) for _,p in hits[:3]]
+ evidence="\n\n".join(f"[PAGE {p['page']}] {s}" for (_,p),s in zip(hits[:3],snippets))
+ if calc_mode:
+  fmt='{"answer":"show arithmetic as numerator / denominator = result with units (e.g. $500,343M / $201,674M = 2.48)","page":integer_or_null,"quote":"short verbatim quote 4-6 words","confidence":number_0_to_1}'
+  extra='Extract the exact raw numbers from the evidence. Show arithmetic explicitly as X / Y = Z in the answer field so the result can be verified. Round to two decimal places.'
+ else:
+  fmt='{"answer":"precise natural language answer with units (e.g. $500,343 million) or Not found in this filing.","page":integer_or_null,"quote":"short verbatim quote 4-6 words","confidence":number_0_to_1}'
+  extra='Express the answer with proper units and formatting (e.g. "$500,343 million" not "500343"). Quote must be under 8 words.'
  prompt=f'''You are a conservative financial filing analyst. Answer ONLY from the filing evidence below.
-Return one JSON object with exactly these keys:
-{{"answer":"short precise answer or Not found in this filing.","page":integer_or_null,"quote":"short verbatim proving quote","confidence":number_0_to_1}}
-Resolve the requested year, table column, sign, and units carefully. For a calculation, include inputs and arithmetic in answer. The quote must be copied verbatim from one cited page. If evidence is insufficient or ambiguous, abstain. Do not add markdown.
+Return one JSON object: {fmt}
+Resolve the requested year, table column, sign, and units carefully. {extra} If evidence is insufficient, answer exactly "Not found in this filing." Do not add markdown.
 
 QUESTION: {question}
 
@@ -18,18 +43,31 @@ EVIDENCE:
  req=Request(os.getenv("OLLAMA_URL","http://127.0.0.1:11434")+"/api/chat",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
  with urlopen(req,timeout=180) as r:data=json.load(r)
  return json.loads(data["message"]["content"])
+
 def answer_question(store,filing_id,question):
  question=question.strip()
  if len(question)<4:raise ValueError("Enter a specific analyst question")
  meta,hits=store.search(filing_id,question)
  if not hits:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
+ terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
+ calc_mode=bool(CALC_RE.search(question))
+ print(f"[RETRIEVAL] pages={[p['page'] for _,p in hits]} calc={calc_mode}")
  result=None
- try:result=_ollama(question,hits)
+ try:result=_ollama(question,hits,terms,calc_mode)
  except Exception as exc:print("Answer model unavailable:",exc)
  if result:
-  page=next((p for _,p in hits if p["page"]==result.get("page")),None); quote=result.get("quote","").strip(); normalized=lambda s:" ".join(re.sub(r"[|$,]"," ",s).lower().split()); valid=page and quote and normalized(quote) in normalized(page["text"])
-  print(f"[DEBUG] answer={result.get('answer')!r} confidence={result.get('confidence')} page={result.get('page')} quote={quote!r} valid={valid}")
-  if result.get("answer")==ABSTAIN or result.get("confidence",0)<.72 or not valid:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
-  return {"answer":result["answer"],"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":quote}]}
- terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
+  page=next((p for _,p in hits if p["page"]==result.get("page")),None)
+  quote=(result.get("quote") or "").strip()
+  page_clean=_clean(page["text"]) if page else ""
+  valid=page and quote and set(_norm(quote).split()).issubset(set(_norm(page_clean).split()))
+  answer=result.get("answer","")
+  # For calc questions recompute from the model's own arithmetic expression
+  if calc_mode and answer!=ABSTAIN:
+   recomputed=_recompute(answer)
+   if recomputed:answer=f"{recomputed} (verified)"
+  print(f"[DEBUG] answer={answer!r} confidence={result.get('confidence')} page={result.get('page')} valid={valid}")
+  if answer==ABSTAIN or result.get("confidence",0)<.72 or not valid:
+   return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
+  clean_quote=" ".join(re.sub(r"\s*\|\s*"," ",quote).split())
+  return {"answer":answer,"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":clean_quote}]}
  return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[{"page":p["page"],"quote":_snippet(p["text"],terms)} for _,p in hits[:3]],"note":"Local answer model unavailable; start Ollama and ensure the configured model is installed."}
