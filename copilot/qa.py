@@ -57,7 +57,7 @@ def answer_question(store,filing_id,question):
  except Exception as exc:print("Answer model unavailable:",exc)
  if result:
   page=next((p for _,p in hits if p["page"]==result.get("page")),None)
-  quote=result.get("quote","").strip()
+  quote=(result.get("quote") or "").strip()
   page_clean=_clean(page["text"]) if page else ""
   valid=page and quote and set(_norm(quote).split()).issubset(set(_norm(page_clean).split()))
   answer=result.get("answer","")
