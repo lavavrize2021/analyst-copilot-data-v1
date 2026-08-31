@@ -38,6 +38,7 @@ def answer_question(store,filing_id,question):
  except Exception as exc:print("Answer model unavailable:",exc)
  if result:
   page=next((p for _,p in hits if p["page"]==result.get("page")),None); quote=result.get("quote","").strip(); normalized=lambda s:" ".join(re.sub(r"[|$,]"," ",s).lower().split()); valid=page and quote and normalized(quote) in normalized(page["text"])
+  print(f"[DEBUG] answer={result.get('answer')!r} confidence={result.get('confidence')} page={result.get('page')} quote={quote!r} valid={valid}")
   if result.get("answer")==ABSTAIN or result.get("confidence",0)<.72 or not valid:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
   return {"answer":result["answer"],"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":quote}]}
  terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
