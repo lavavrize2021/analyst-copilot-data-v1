@@ -23,6 +23,7 @@ def answer_question(store,filing_id,question):
  if len(question)<4:raise ValueError("Enter a specific analyst question")
  meta,hits=store.search(filing_id,question)
  if not hits:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
+ print(f"[RETRIEVAL] pages={[p['page'] for _,p in hits]}")
  result=None
  try:result=_ollama(question,hits)
  except Exception as exc:print("Answer model unavailable:",exc)
