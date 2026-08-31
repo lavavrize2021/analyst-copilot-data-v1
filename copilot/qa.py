@@ -1,7 +1,8 @@
 import json,os,re
 from urllib.request import Request,urlopen
 ABSTAIN="Not found in this filing."
-CALC_RE=re.compile(r'\b(calculat|divid|ratio|percent|turnover|margin|growth|averag|multiply|subtract)\b',re.I)
+CALC_RE=re.compile(r'\b(calculat|divid|ratio|percent|turnover|margin|growth|averag|multiply|subtract|change|compar|difference|increase|decrease|between)\b',re.I)
+RATIO_RE=re.compile(r'\b(calculat|divid|ratio|turnover|margin|averag|multiply)\b',re.I)
 
 def _snippet(text,terms,limit=600):
  low=text.lower(); pos=[low.find(t) for t in terms if len(t)>3 and low.find(t)>=0]; at=min(pos) if pos else 0; start=max(0,at-200); return text[start:start+limit].strip()
@@ -22,12 +23,16 @@ def _recompute(answer_text):
   if den:return round(num/den,2)
  return None
 
-def _ollama(question,hits,terms,calc_mode):
- snippets=[_clean(_snippet(p['text'],terms,600)) for _,p in hits[:3]]
- evidence="\n\n".join(f"[PAGE {p['page']}] {s}" for (_,p),s in zip(hits[:3],snippets))
- if calc_mode:
+def _ollama(question,hits,terms,calc_mode,ratio_mode):
+ n_pages=4 if calc_mode else 3
+ snippets=[_clean(_snippet(p['text'],terms,600)) for _,p in hits[:n_pages]]
+ evidence="\n\n".join(f"[PAGE {p['page']}] {s}" for (_,p),s in zip(hits[:n_pages],snippets))
+ if ratio_mode:
   fmt='{"answer":"show arithmetic as numerator / denominator = result with units (e.g. $500,343M / $201,674M = 2.48)","page":integer_or_null,"quote":"short verbatim quote 4-6 words","confidence":number_0_to_1}'
   extra='Extract the exact raw numbers from the evidence. Show arithmetic explicitly as X / Y = Z in the answer field so the result can be verified. Round to two decimal places.'
+ elif calc_mode:
+  fmt='{"answer":"precise natural language answer showing both values and their difference/change with units","page":integer_or_null,"quote":"short verbatim quote 4-6 words","confidence":number_0_to_1}'
+  extra='For comparisons, state both values and the change (e.g. "Increased from $481,317M in FY2017 to $495,761M in FY2018, a change of +$14,444M (+3.0%)").'
  else:
   fmt='{"answer":"precise natural language answer with units (e.g. $500,343 million) or Not found in this filing.","page":integer_or_null,"quote":"short verbatim quote 4-6 words","confidence":number_0_to_1}'
   extra='Express the answer with proper units and formatting (e.g. "$500,343 million" not "500343"). Quote must be under 8 words.'
@@ -51,9 +56,10 @@ def answer_question(store,filing_id,question):
  if not hits:return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
  terms=[x.lower() for x in re.findall(r"[A-Za-z]{4,}",question)]
  calc_mode=bool(CALC_RE.search(question))
- print(f"[RETRIEVAL] pages={[p['page'] for _,p in hits]} calc={calc_mode}")
+ ratio_mode=bool(RATIO_RE.search(question))
+ print(f"[RETRIEVAL] pages={[p['page'] for _,p in hits]} calc={calc_mode} ratio={ratio_mode}")
  result=None
- try:result=_ollama(question,hits,terms,calc_mode)
+ try:result=_ollama(question,hits,terms,calc_mode,ratio_mode)
  except Exception as exc:print("Answer model unavailable:",exc)
  if result:
   page=next((p for _,p in hits if p["page"]==result.get("page")),None)
@@ -61,12 +67,12 @@ def answer_question(store,filing_id,question):
   page_clean=_clean(page["text"]) if page else ""
   valid=page and quote and set(_norm(quote).split()).issubset(set(_norm(page_clean).split()))
   answer=result.get("answer","")
-  # For calc questions recompute from the model's own arithmetic expression
-  if calc_mode and answer!=ABSTAIN:
+  # Only recompute for ratio/division questions, not comparisons
+  if ratio_mode and answer!=ABSTAIN:
    recomputed=_recompute(answer)
    if recomputed:answer=f"{recomputed} (verified)"
   print(f"[DEBUG] answer={answer!r} confidence={result.get('confidence')} page={result.get('page')} valid={valid}")
-  if answer==ABSTAIN or result.get("confidence",0)<.72 or not valid:
+  if answer==ABSTAIN or (result.get("confidence") or 0)<.72 or not valid:
    return {"answer":ABSTAIN,"declined":True,"document":meta["name"],"evidence":[]}
   clean_quote=" ".join(re.sub(r"\s*\|\s*"," ",quote).split())
   return {"answer":answer,"declined":False,"document":meta["name"],"evidence":[{"page":page["page"],"quote":clean_quote}]}
